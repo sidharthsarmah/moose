@@ -1,0 +1,89 @@
+
+RealVectorValue
+ScheiderTraction::computeTraction()
+{
+    
+    RealVectorValue traction_local;
+    
+    unsigned int i;
+    
+    for (i = 0; i < 3; i++)
+    {
+        if (i == 0)
+        {
+            if (_interface_displacement_jump[_qp](i) < 0.01*_delta_u0(i))
+            {
+                traction_local(i) = _max_allowable_traction(i) * ( 2*(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i))) - std::pow(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i)), 2));
+            }
+            
+            else if (_interface_displacement_jump[_qp](i) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](i) < 0.5*_delta_u0(i))
+                
+            {
+                traction_local(i) = _max_allowable_traction(i) * 1;
+            }
+            
+            else if (_interface_displacement_jump[_qp](i) >= 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](i) <= 1*_delta_u0(i))
+            {
+                traction_local(i) = _max_allowable_traction(i) * (2*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 3)  - 3*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 2) + 1);
+            }
+            
+            else
+                
+            {
+                traction_local(i) = 0.0000001*_interface_displacement_jump[_qp](i);
+            }
+        }
+        else
+            
+            traction_local(i) = 72656*_interface_displacement_jump[_qp](i);
+    }
+  return traction_local;
+}
+
+RankTwoTensor
+ScheiderTraction::computeTractionDerivatives()
+{
+  RankTwoTensor traction_jump_derivatives_local;
+    
+  unsigned int i, j;
+    
+    for (i = 0; i < 3; i++)
+    {
+            for (j = 0; j < 3; j++)
+            {
+                    if (i == j)
+                    {
+                        if (i == 0)
+                        {
+                            
+                            if (_interface_displacement_jump[_qp](j) < 0.01*_delta_u0(i))
+                            {
+                                traction_jump_derivatives_local(i, j) = _max_allowable_traction(i) * (2/(0.01*_delta_u0(i)) - (2*_interface_displacement_jump[_qp](j)/std::pow(0.01*_delta_u0(i),2)));
+                            }
+                            
+                            else if (_interface_displacement_jump[_qp](j) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](j) < 0.5*_delta_u0(i))
+                            {
+                                traction_jump_derivatives_local(i, j) = 0.0;
+                            }
+                            
+                            else if (_interface_displacement_jump[_qp](j) >= 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= 1*_delta_u0(i))
+                            {
+                                traction_jump_derivatives_local(i, j) = 6 * _max_allowable_traction(i) * (std::pow(_interface_displacement_jump[_qp](j) - 0.5*_delta_u0(i), 2)/ std::pow(_delta_u0(i)-0.5*_delta_u0(i), 3) -  (_interface_displacement_jump[_qp](j) - 0.5*_delta_u0(i))/std::pow(_delta_u0(i)-0.5*_delta_u0(i), 2));
+                            }
+                            
+                            else
+                            {
+                                traction_jump_derivatives_local(i, j) = 0.000001;
+                            }
+                        }
+                        else
+                            traction_jump_derivatives_local(i, j) = 72656;
+                    }
+                
+                else
+                    traction_jump_derivatives_local(i, j) = 0.0;
+            }
+    }
+
+      return traction_jump_derivatives_local;
+}
