@@ -1,0 +1,200 @@
+#include "ScheiderViscous.h"
+
+registerMooseObject("TensorMechanicsApp", ScheiderViscous);
+
+InputParameters
+ScheiderViscous::validParams()
+{
+  InputParameters params = CZMComputeLocalTractionTotalBase::validParams();
+    params.addClassDescription("Scheider cohesive law");
+    params.addRequiredParam<Real>("normal_gap_at_maximum_normal_traction","d0_normal");
+    params.addRequiredParam<Real>("tangential_gap_at_maximum_shear_traction","d0_shear");
+    params.addRequiredParam<Real>("maximum_normal_traction","T0_normal");
+    params.addRequiredParam<Real>("maximum_shear_traction", "T0_shear");
+    params.addParam<MaterialPropertyName>("c_tot", "total concentration");
+    params.addParam<Real>("viscosity", "Viscosity");
+  return params;
+}
+
+ScheiderViscous::ScheiderViscous(const InputParameters & parameters)
+  : CZMComputeLocalTractionTotalBase(parameters),
+    _delta_u0({getParam<Real>("normal_gap_at_maximum_normal_traction"),
+               getParam<Real>("tangential_gap_at_maximum_shear_traction"),
+               getParam<Real>("tangential_gap_at_maximum_shear_traction")}),
+    _max_allowable_traction({getParam<Real>("maximum_normal_traction"),
+                             getParam<Real>("maximum_shear_traction"),
+                             getParam<Real>("maximum_shear_traction")}),
+    _interface_displacement_jump_old(getMaterialPropertyOld<RealVectorValue>(_base_name + "interface_displacement_jump")),
+    _c_tot(getADMaterialProperty<Real>("c_tot")),
+    _viscosity(getParam<Real>("viscosity"))
+{
+}
+
+void
+ScheiderViscous::computeInterfaceTractionAndDerivatives()
+{
+  _interface_traction[_qp] = computeTraction();
+  _dinterface_traction_djump[_qp] = computeTractionDerivatives();
+}
+
+RealVectorValue
+ScheiderViscous::computeTraction()
+{
+    RealVectorValue traction_local;
+    unsigned int i;
+    for (i = 0; i < 3; i++)
+    {
+        Real _max_interface_displacement_jump = 0.0;
+            if(i == 0)
+            {
+                if (_interface_displacement_jump[_qp](i) <= 0.0)
+                    traction_local(i) = (_max_allowable_traction(i)/(0.01*_delta_u0(i))) * _interface_displacement_jump[_qp](i);
+
+                else if (_interface_displacement_jump[_qp](i) > 0.0)
+                {
+                    _max_interface_displacement_jump = std::max(_max_interface_displacement_jump, _interface_displacement_jump[_qp](i));
+                    
+                    Real _max_traction = _max_allowable_traction(i) * (2*std::pow((_max_interface_displacement_jump-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 3)  - 3*std::pow((_max_interface_displacement_jump-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 2) + 1);
+                    
+                    if (_interface_displacement_jump[_qp](i) >= _max_interface_displacement_jump)
+                        {
+
+                          if (_interface_displacement_jump[_qp](i)  > 0 && _interface_displacement_jump[_qp](i) < 0.01*_delta_u0(i))
+                              traction_local(i) = _max_allowable_traction(i) * (2*(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i))) - std::pow(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i)), 2));
+                                        
+                           else if (_interface_displacement_jump[_qp](i) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](i) <= 0.5*_delta_u0(i))
+                              traction_local(i) = _max_allowable_traction(i);
+                                        
+                           else if (_interface_displacement_jump[_qp](i) > 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](i) <= 1*_delta_u0(i))
+                              traction_local(i) = _viscosity*(_max_allowable_traction(i)/_delta_u0(i))*((_interface_displacement_jump[_qp](i)- _interface_displacement_jump_old[_qp](i))/_dt) + _max_allowable_traction(i) * (2*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 3)  - 3*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 2) + 1);
+                                        
+                            else if (_interface_displacement_jump[_qp](i) > 1*_delta_u0(i))
+                                            traction_local(i) = 0.0000001*_interface_displacement_jump[_qp](i);
+                       }
+                                    
+                    else if (_interface_displacement_jump[_qp](i) < _max_interface_displacement_jump)
+                                        
+                      traction_local(i) = _max_traction*(_interface_displacement_jump[_qp](i)/_max_interface_displacement_jump);
+                }
+            }
+            
+            else
+            {
+                if (_interface_displacement_jump[_qp](i) < -1*_delta_u0(i))
+                    traction_local(i) = 0.0000001*_interface_displacement_jump[_qp](i);
+                
+                else if (_interface_displacement_jump[_qp](i) >= -1*_delta_u0(i) && _interface_displacement_jump[_qp](i) < -0.5*_delta_u0(i))
+                    traction_local(i) = (-1)*_max_allowable_traction(i) * (2*std::pow((_interface_displacement_jump[_qp](i)-(-0.5*_delta_u0(i)))/((-1*_delta_u0(i))-(-0.5*_delta_u0(i))), 3)  - 3*std::pow((_interface_displacement_jump[_qp](i)-(-0.5*_delta_u0(i)))/((-1*_delta_u0(i))-(-0.5*_delta_u0(i))), 2) + 1);
+                
+                else if (_interface_displacement_jump[_qp](i) > -0.5*_delta_u0(i) && _interface_displacement_jump[_qp](i) <= -0.01*_delta_u0(i))
+                    traction_local(i) = -1 * _max_allowable_traction(i);
+                
+                else if (_interface_displacement_jump[_qp](i) > -0.01*_delta_u0(i) && _interface_displacement_jump[_qp](i) < 0.0*_delta_u0(i))
+                    traction_local(i) = -1*_max_allowable_traction(i) * (2*(_interface_displacement_jump[_qp](i)/(-0.01*_delta_u0(i))) - std::pow(_interface_displacement_jump[_qp](i)/(-0.01*_delta_u0(i)), 2));
+                
+                else if (_interface_displacement_jump[_qp](i) >= 0.0 && _interface_displacement_jump[_qp](i) < 0.01*_delta_u0(i))
+                    traction_local(i) = _max_allowable_traction(i) * (2*(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i))) - std::pow(_interface_displacement_jump[_qp](i)/(0.01*_delta_u0(i)), 2));
+                
+                else if (_interface_displacement_jump[_qp](i) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](i) <= 0.5*_delta_u0(i))
+                    traction_local(i) = 1 * _max_allowable_traction(i);
+                
+                else if (_interface_displacement_jump[_qp](i) > 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](i) < 1*_delta_u0(i))
+                    traction_local(i) = _max_allowable_traction(i) * (2*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 3)  - 3*std::pow((_interface_displacement_jump[_qp](i)-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 2) + 1);
+                
+                else if (_interface_displacement_jump[_qp](i) >= 1*_delta_u0(i))
+                    traction_local(i) = 0.0000001*_interface_displacement_jump[_qp](i);
+            }
+        }
+  return traction_local;
+}
+
+RankTwoTensor
+ScheiderViscous::computeTractionDerivatives()
+{
+  RankTwoTensor traction_jump_derivatives_local;
+    
+  unsigned int i, j;
+    
+    for (i = 0; i < 3; i++)
+    {
+        Real _max_interface_displacement_jump = 0.0;
+           if (i == 0)
+            {
+                for (j = 0; j < 3; j++)
+                {
+                    if (i == j)
+                    {
+                        
+                        if (_interface_displacement_jump[_qp](j) <= 0.0)
+                            traction_jump_derivatives_local(i, j) = (_max_allowable_traction(i)/(0.01*_delta_u0(i)));
+                        
+                        else if (_interface_displacement_jump[_qp](j) > 0.0)
+                        {
+                            _max_interface_displacement_jump = std::max(_max_interface_displacement_jump, _interface_displacement_jump[_qp](j));
+                            
+                            Real _max_traction = _max_allowable_traction(i) * (2*std::pow((_max_interface_displacement_jump-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 3)  - 3*std::pow((_max_interface_displacement_jump-0.5*_delta_u0(i))/(_delta_u0(i)-0.5*_delta_u0(i)), 2) + 1);
+                            
+                            if (_interface_displacement_jump[_qp](j) >= _max_interface_displacement_jump)
+                            {
+                                if (_interface_displacement_jump[_qp](j)  > 0 && _interface_displacement_jump[_qp](j) < 0.01*_delta_u0(i))
+                                    traction_jump_derivatives_local(i, j) = 2 * _max_allowable_traction(i) * (1/(0.01*_delta_u0(i)) - (_interface_displacement_jump[_qp](j)/std::pow(0.01*_delta_u0(i),2)));
+                                
+                                else if (_interface_displacement_jump[_qp](j) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= 0.5*_delta_u0(i))
+                                    traction_jump_derivatives_local(i, j) = 0.0;
+                                
+                                else if (_interface_displacement_jump[_qp](j) > 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= 1*_delta_u0(i))
+                                    
+                                    traction_jump_derivatives_local(i, j) = _viscosity*(_max_allowable_traction(i)/_delta_u0(i))*(1/_dt) + 6 * _max_allowable_traction(i) * (std::pow(_interface_displacement_jump[_qp](j)-0.5*_delta_u0(i), 2)/ std::pow(_delta_u0(i)-0.5*_delta_u0(i), 3) - (_interface_displacement_jump[_qp](j)-0.5*_delta_u0(i))/std::pow(_delta_u0(i)-0.5*_delta_u0(i), 2));
+                                
+                                else if (_interface_displacement_jump[_qp](j) > 1*_delta_u0(i))
+                                    traction_jump_derivatives_local(i, j) = 0.0000001;
+                            }
+                            else if (_interface_displacement_jump[_qp](j) < _max_interface_displacement_jump)
+                                
+                                traction_jump_derivatives_local(i, j) = _max_traction/_max_interface_displacement_jump;
+                        }
+                    }
+                    else
+                        traction_jump_derivatives_local(i, j) = 0.0;
+                }
+            }
+            else
+            {
+                for (j = 0; j < 3; j++)
+                {
+                    if (i == j)
+                    {
+                        if (_interface_displacement_jump[_qp](i) < -1*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 0.0000001;
+                        
+                        else if (_interface_displacement_jump[_qp](j) >= -1*_delta_u0(i) && _interface_displacement_jump[_qp](j) < -0.5*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 6*(-1)* _max_allowable_traction(i) * (std::pow(_interface_displacement_jump[_qp](j)-(-0.5*_delta_u0(i)), 2)/ std::pow((-1*_delta_u0(i))-(-0.5*_delta_u0(i)), 3) -  (_interface_displacement_jump[_qp](j) - (-0.5*_delta_u0(i)))/std::pow((-1*_delta_u0(i))-(-0.5*_delta_u0(i)), 2));
+                        
+                        else if (_interface_displacement_jump[_qp](j) >= -0.5*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= -0.01*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 0.0;
+                        
+                        else if (_interface_displacement_jump[_qp](j) > -0.01*_delta_u0(i) && _interface_displacement_jump[_qp](j) < 0.0*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = -1 * _max_allowable_traction(i) * (1/(-0.01*_delta_u0(i)) - (_interface_displacement_jump[_qp](j)/std::pow(-0.01*_delta_u0(i),2)));
+                        
+                        else if (_interface_displacement_jump[_qp](j) >= 0.0 && _interface_displacement_jump[_qp](j) < 0.01*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 2 * _max_allowable_traction(i) * (1/(0.01*_delta_u0(i)) - (_interface_displacement_jump[_qp](j)/std::pow(0.01*_delta_u0(i),2)));
+                        
+                        else if (_interface_displacement_jump[_qp](j) >= 0.01*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= 0.5*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 0.0;
+                        
+                        else if (_interface_displacement_jump[_qp](j) > 0.5*_delta_u0(i) && _interface_displacement_jump[_qp](j) <= 1*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 6 * _max_allowable_traction(i) * (std::pow(_interface_displacement_jump[_qp](j)-0.5*_delta_u0(i), 2)/ std::pow(_delta_u0(i)-0.5*_delta_u0(i), 3) - (_interface_displacement_jump[_qp](j)-0.5*_delta_u0(i))/std::pow(_delta_u0(i)-0.5*_delta_u0(i), 2));
+                        
+                        else if (_interface_displacement_jump[_qp](j) > 1*_delta_u0(i))
+                            traction_jump_derivatives_local(i, j) = 0.0000001;
+                        
+                    }
+                    else
+                        traction_jump_derivatives_local(i, j) = 0.0;
+                }
+            }
+      return traction_jump_derivatives_local;
+}
+
+                                        
+
